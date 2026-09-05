@@ -13,12 +13,6 @@
   <strong>A modern Android launcher built from scratch with Kotlin.</strong>
 </p>
 
-<p align="center">
-  <a href="#license">License</a>
-  •
-  <a href="#credits">Credits</a>
-</p>
-
 ---
 
 ## 📜 License
