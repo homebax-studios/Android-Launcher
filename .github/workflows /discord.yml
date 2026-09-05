@@ -1,0 +1,158 @@
+name: Discord Notify
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Get Changed Files
+        id: files
+        shell: bash
+        run: |
+          FILES=""
+
+          while IFS= read -r FILE; do
+            [ -z "$FILE" ] && continue
+
+            OLD_SIZE=$(git cat-file -s "HEAD^:$FILE" 2>/dev/null || echo 0)
+
+            if [ -f "$FILE" ]; then
+              NEW_SIZE=$(stat -c%s "$FILE")
+            else
+              NEW_SIZE=0
+            fi
+
+            format_size() {
+              local SIZE=$1
+
+              if [ "$SIZE" -ge 1073741824 ]; then
+                awk "BEGIN {printf \"%.2f GB\", $SIZE/1073741824}"
+              elif [ "$SIZE" -ge 1048576 ]; then
+                awk "BEGIN {printf \"%.2f MB\", $SIZE/1048576}"
+              elif [ "$SIZE" -ge 1024 ]; then
+                awk "BEGIN {printf \"%.2f KB\", $SIZE/1024}"
+              else
+                echo "${SIZE} B"
+              fi
+            }
+
+            OLD_FORMATTED=$(format_size "$OLD_SIZE")
+            NEW_FORMATTED=$(format_size "$NEW_SIZE")
+
+            if [ "$OLD_SIZE" -eq 0 ]; then
+              SIZE_INFO="Nový soubor: ${NEW_FORMATTED}"
+            elif [ "$NEW_SIZE" -eq 0 ]; then
+              SIZE_INFO="Smazán: ${OLD_FORMATTED}"
+            else
+              DIFF=$((NEW_SIZE - OLD_SIZE))
+
+              if [ "$DIFF" -gt 0 ]; then
+                DIFF_FORMATTED="+$(format_size "$DIFF")"
+              elif [ "$DIFF" -lt 0 ]; then
+                ABS_DIFF=$((DIFF * -1))
+                DIFF_FORMATTED="-$(format_size "$ABS_DIFF")"
+              else
+                DIFF_FORMATTED="±0 B"
+              fi
+
+              SIZE_INFO="${OLD_FORMATTED} → ${NEW_FORMATTED} (${DIFF_FORMATTED})"
+            fi
+
+            if [ -z "$FILES" ]; then
+              FILES="\`${FILE}\` — ${SIZE_INFO}"
+            else
+              FILES="${FILES}\\n\`${FILE}\` — ${SIZE_INFO}"
+            fi
+
+          done < <(git diff --name-only HEAD^ HEAD)
+
+          if [ -z "$FILES" ]; then
+            FILES="Žádné změny"
+          fi
+
+          echo "changed_files=$FILES" >> "$GITHUB_OUTPUT"
+
+      - name: Get Commit Title and Description
+        id: commit
+        shell: bash
+        env:
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          TITLE=$(printf '%s\n' "$COMMIT_MESSAGE" | head -n 1)
+          DESCRIPTION=$(printf '%s\n' "$COMMIT_MESSAGE" | tail -n +2 | sed '/^[[:space:]]*$/d' | sed ':a;N;$!ba;s/\n/\\n/g')
+
+          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
+          echo "description=$DESCRIPTION" >> "$GITHUB_OUTPUT"
+
+      - name: Send Discord Embed
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          COMMIT_TITLE: ${{ steps.commit.outputs.title }}
+          COMMIT_DESCRIPTION: ${{ steps.commit.outputs.description }}
+          AUTHOR: ${{ github.actor }}
+          BRANCH: ${{ github.ref_name }}
+          CHANGED_FILES: ${{ steps.files.outputs.changed_files }}
+          COMMIT_URL: ${{ github.event.head_commit.url }}
+          TIMESTAMP: ${{ github.event.head_commit.timestamp }}
+        run: |
+          curl \
+            -H "Content-Type: application/json" \
+            -X POST \
+            --data @- \
+            "$DISCORD_TOKEN" <<EOF
+          {
+            "embeds": [
+              {
+                "title": "📱 HB Launcher - Update GitHub",
+                "description": "Update Github code | Public",
+                "color": 34047,
+                "fields": [
+                  {
+                    "name": "📜 Title",
+                    "value": "${COMMIT_TITLE}",
+                    "inline": true
+                  },
+                  {
+                    "name": "📜 Description",
+                    "value": "${COMMIT_DESCRIPTION:-Není popis}",
+                    "inline": false
+                  },
+                  {
+                    "name": "👤 Upravil/a",
+                    "value": "[@${AUTHOR}](https://github.com/${AUTHOR})",
+                    "inline": true
+                  },
+                  {
+                    "name": "🌿 Branch",
+                    "value": "\`${BRANCH}\`",
+                    "inline": true
+                  },
+                  {
+                    "name": "🛠️ Upravené soubory",
+                    "value": "${CHANGED_FILES}",
+                    "inline": false
+                  },
+                  {
+                    "name": "🕐 Čas změny",
+                    "value": "${TIMESTAMP}",
+                    "inline": false
+                  }
+                ],
+                "timestamp": "${TIMESTAMP}",
+                "footer": {
+                  "text": "Homebax Browser • Homebax Studios 2020–2026"
+                }
+              }
+            ]
+          }
+          EOF
