@@ -50,9 +50,9 @@ jobs:
             NEW_FORMATTED=$(format_size "$NEW_SIZE")
 
             if [ "$OLD_SIZE" -eq 0 ]; then
-              SIZE_INFO="Nový soubor: ${NEW_FORMATTED}"
+              SIZE_INFO="New file: ${NEW_FORMATTED}"
             elif [ "$NEW_SIZE" -eq 0 ]; then
-              SIZE_INFO="Smazán: ${OLD_FORMATTED}"
+              SIZE_INFO="Deleted: ${OLD_FORMATTED}"
             else
               DIFF=$((NEW_SIZE - OLD_SIZE))
 
@@ -71,16 +71,20 @@ jobs:
             if [ -z "$FILES" ]; then
               FILES="\`${FILE}\` — ${SIZE_INFO}"
             else
-              FILES="${FILES}\\n\`${FILE}\` — ${SIZE_INFO}"
+              FILES="${FILES}"$'\n'"\`${FILE}\` — ${SIZE_INFO}"
             fi
 
           done < <(git diff --name-only HEAD^ HEAD)
 
           if [ -z "$FILES" ]; then
-            FILES="Žádné změny"
+            FILES="No changes"
           fi
 
-          echo "changed_files=$FILES" >> "$GITHUB_OUTPUT"
+          {
+            echo 'changed_files<<EOF'
+            echo "$FILES"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
 
       - name: Get Commit Title and Description
         id: commit
@@ -89,14 +93,28 @@ jobs:
           COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
           TITLE=$(printf '%s\n' "$COMMIT_MESSAGE" | head -n 1)
-          DESCRIPTION=$(printf '%s\n' "$COMMIT_MESSAGE" | tail -n +2 | sed '/^[[:space:]]*$/d' | sed ':a;N;$!ba;s/\n/\\n/g')
 
-          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
-          echo "description=$DESCRIPTION" >> "$GITHUB_OUTPUT"
+          DESCRIPTION=$(printf '%s\n' "$COMMIT_MESSAGE" \
+            | tail -n +2 \
+            | sed '/^[[:space:]]*$/d')
+
+          if [ -z "$DESCRIPTION" ]; then
+            DESCRIPTION="No description"
+          fi
+
+          {
+            echo 'title<<EOF'
+            echo "$TITLE"
+            echo 'EOF'
+
+            echo 'description<<EOF'
+            echo "$DESCRIPTION"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
 
       - name: Send Discord Embed
         env:
-          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
           COMMIT_TITLE: ${{ steps.commit.outputs.title }}
           COMMIT_DESCRIPTION: ${{ steps.commit.outputs.description }}
           AUTHOR: ${{ github.actor }}
@@ -104,55 +122,90 @@ jobs:
           CHANGED_FILES: ${{ steps.files.outputs.changed_files }}
           COMMIT_URL: ${{ github.event.head_commit.url }}
           TIMESTAMP: ${{ github.event.head_commit.timestamp }}
+        shell: bash
         run: |
-          curl \
+          if [ -z "$DISCORD_WEBHOOK" ]; then
+            echo "ERROR: DISCORD_WEBHOOK secret is not configured."
+            exit 1
+          fi
+
+          jq -n \
+            --arg title "📱 HB Launcher - GitHub Update" \
+            --arg description "GitHub code update | Public" \
+            --arg commit_title "$COMMIT_TITLE" \
+            --arg commit_description "$COMMIT_DESCRIPTION" \
+            --arg author "$AUTHOR" \
+            --arg branch "$BRANCH" \
+            --arg changed_files "$CHANGED_FILES" \
+            --arg commit_url "$COMMIT_URL" \
+            --arg timestamp "$TIMESTAMP" \
+            '{
+              embeds: [
+                {
+                  title: $title,
+                  description: $description,
+                  color: 34047,
+                  fields: [
+                    {
+                      name: "📜 Title",
+                      value: $commit_title,
+                      inline: true
+                    },
+                    {
+                      name: "📜 Description",
+                      value: $commit_description,
+                      inline: false
+                    },
+                    {
+                      name: "👤 Author",
+                      value: ("[@\($author)](https://github.com/\($author))"),
+                      inline: true
+                    },
+                    {
+                      name: "🌿 Branch",
+                      value: ("`\($branch)`"),
+                      inline: true
+                    },
+                    {
+                      name: "🛠️ Changed Files",
+                      value: $changed_files,
+                      inline: false
+                    },
+                    {
+                      name: "🔗 Commit",
+                      value: ("[View commit](" + $commit_url + ")"),
+                      inline: false
+                    },
+                    {
+                      name: "🕐 Time",
+                      value: $timestamp,
+                      inline: false
+                    }
+                  ],
+                  timestamp: $timestamp,
+                  footer: {
+                    text: "HB Launcher • Homebax Studios 2020–2026"
+                  }
+                }
+              ]
+            }' > payload.json
+
+          HTTP_STATUS=$(curl \
+            --silent \
+            --show-error \
+            --output /tmp/discord_response.txt \
+            --write-out "%{http_code}" \
             -H "Content-Type: application/json" \
             -X POST \
-            --data @- \
-            "$DISCORD_TOKEN" <<EOF
-          {
-            "embeds": [
-              {
-                "title": "📱 HB Launcher - Update GitHub",
-                "description": "Update GitHub code | Public",
-                "color": 34047,
-                "fields": [
-                  {
-                    "name": "📜 Title",
-                    "value": "${COMMIT_TITLE}",
-                    "inline": true
-                  },
-                  {
-                    "name": "📜 Description",
-                    "value": "${COMMIT_DESCRIPTION:-Není popis}",
-                    "inline": false
-                  },
-                  {
-                    "name": "👤 Upravil/a",
-                    "value": "[@${AUTHOR}](https://github.com/${AUTHOR})",
-                    "inline": true
-                  },
-                  {
-                    "name": "🌿 Branch",
-                    "value": "\`${BRANCH}\`",
-                    "inline": true
-                  },
-                  {
-                    "name": "🛠️ Upravené soubory",
-                    "value": "${CHANGED_FILES}",
-                    "inline": false
-                  },
-                  {
-                    "name": "🕐 Čas změny",
-                    "value": "${TIMESTAMP}",
-                    "inline": false
-                  }
-                ],
-                "timestamp": "${TIMESTAMP}",
-                "footer": {
-                  "text": "HB Launcher • Homebax Studios 2020–2026"
-                }
-              }
-            ]
-          }
-          EOF
+            --data-binary @payload.json \
+            "$DISCORD_WEBHOOK")
+
+          echo "Discord HTTP status: $HTTP_STATUS"
+
+          if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
+            echo "Discord webhook request failed."
+            cat /tmp/discord_response.txt
+            exit 1
+          fi
+
+          echo "Discord notification sent successfully."
