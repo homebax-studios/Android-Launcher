@@ -96,7 +96,7 @@ jobs:
 
       - name: Send Discord Embed
         env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
           COMMIT_TITLE: ${{ steps.commit.outputs.title }}
           COMMIT_DESCRIPTION: ${{ steps.commit.outputs.description }}
           AUTHOR: ${{ github.actor }}
@@ -114,7 +114,7 @@ jobs:
             "embeds": [
               {
                 "title": "📱 HB Launcher - Update GitHub",
-                "description": "Update Github code | Public",
+                "description": "Update GitHub code | Public",
                 "color": 34047,
                 "fields": [
                   {
@@ -150,7 +150,7 @@ jobs:
                 ],
                 "timestamp": "${TIMESTAMP}",
                 "footer": {
-                  "text": "Homebax Browser • Homebax Studios 2020–2026"
+                  "text": "HB Launcher • Homebax Studios 2020–2026"
                 }
               }
             ]
