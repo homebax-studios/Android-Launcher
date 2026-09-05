@@ -30,7 +30,8 @@ When redistributing or modifying this project, you must:
 ### Original Project
 
 **HB Launcher**  
-Created by **Homebax Studios**
+Created by **Homebax Studios Team**
+[`OWNERS`](OWNERS)
 
 If your project is based on HB Launcher, please clearly state that it is derived from HB Launcher and credit the original project and its author.
 
